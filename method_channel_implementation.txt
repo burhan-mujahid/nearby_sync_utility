@@ -367,5 +367,3 @@ void _handleError(dynamic error) {
     }
 }
 ```
-
-This documentation provides a comprehensive breakdown of the method channel and event channel implementations, including code snippets for both Flutter and native platforms, error handling, and event processing logic.
