@@ -1,0 +1,371 @@
+# Nearby Sync Utility - Method & Event Channel Implementation Details
+
+## 1. Method Channel Implementation
+
+### 1.1 Channel Setup
+```dart
+final methodChannel = const MethodChannel('nearby_sync_utility');
+final eventChannel = const EventChannel('nearby_sync_utility_events');
+```
+
+### 1.2 Core Methods
+
+#### getPlatformVersion()
+Purpose: Development/debugging method to verify platform integration
+```dart
+// Flutter Implementation
+Future<String?> getPlatformVersion() async {
+    return await methodChannel.invokeMethod<String>('getPlatformVersion');
+}
+
+// Android Implementation
+override fun getPlatformVersion(): String = "Android ${android.os.Build.VERSION.RELEASE}"
+
+// iOS Implementation
+case "getPlatformVersion":
+    result(UIDevice.current.systemVersion)
+```
+
+#### startAdvertising(String deviceName)
+Purpose: Begin broadcasting device presence
+```dart
+// Flutter Layer
+Future<bool> startAdvertising(String deviceName) async {
+    final result = await methodChannel.invokeMethod<bool>(
+        'startAdvertising',
+        {'deviceName': deviceName},
+    );
+    return result ?? false;
+}
+
+// Android Implementation
+private fun startAdvertising(deviceName: String, result: Result) {
+    val advertisingOptions = AdvertisingOptions.Builder()
+        .setStrategy(Strategy.P2P_STAR)
+        .build()
+
+    Nearby.getConnectionsClient(context)
+        .startAdvertising(
+            deviceName,
+            SERVICE_ID,
+            connectionLifecycleCallback,
+            advertisingOptions
+        )
+        .addOnSuccessListener { result.success(true) }
+        .addOnFailureListener { result.success(false) }
+}
+
+// iOS Implementation
+private func startAdvertising(deviceName: String, result: @escaping FlutterResult) {
+    peerID = MCPeerID(displayName: deviceName)
+    session = MCSession(peer: peerID!, securityIdentity: nil, 
+                       encryptionPreference: .required)
+    advertiser = MCNearbyServiceAdvertiser(
+        peer: peerID!,
+        discoveryInfo: nil,
+        serviceType: serviceType
+    )
+    advertiser?.startAdvertising()
+    result(true)
+}
+```
+
+#### startDiscovery()
+Purpose: Begin scanning for nearby devices
+```dart
+// Flutter Layer
+Future<bool> startDiscovery() async {
+    final result = await methodChannel.invokeMethod<bool>('startDiscovery');
+    return result ?? false;
+}
+
+// Android Implementation
+private fun startDiscovery(result: Result) {
+    val discoveryOptions = DiscoveryOptions.Builder()
+        .setStrategy(Strategy.P2P_STAR)
+        .build()
+
+    Nearby.getConnectionsClient(context)
+        .startDiscovery(
+            SERVICE_ID,
+            endpointDiscoveryCallback,
+            discoveryOptions
+        )
+        .addOnSuccessListener { result.success(true) }
+        .addOnFailureListener { result.success(false) }
+}
+
+// iOS Implementation
+private func startDiscovery(result: @escaping FlutterResult) {
+    browser = MCNearbyServiceBrowser(peer: peerID!, serviceType: serviceType)
+    browser?.delegate = self
+    browser?.startBrowsingForPeers()
+    result(true)
+}
+```
+
+#### connectToDevice(String deviceId)
+Purpose: Establish connection with discovered device
+```dart
+// Flutter Layer with Retry Logic
+Future<bool> connectToDevice(String deviceId) async {
+    try {
+        final result = await methodChannel.invokeMethod<bool>(
+            'connectToDevice',
+            {'deviceId': deviceId},
+        );
+        return result ?? false;
+    } catch (e) {
+        // Implement retry mechanism
+        await stopDiscovery();
+        await Future.delayed(Duration(milliseconds: 500));
+        await startDiscovery();
+        rethrow;
+    }
+}
+
+// Android Implementation
+private fun connectToDevice(deviceId: String, result: Result) {
+    Nearby.getConnectionsClient(context)
+        .requestConnection(
+            localDeviceName,
+            deviceId,
+            connectionLifecycleCallback
+        )
+        .addOnSuccessListener { result.success(true) }
+        .addOnFailureListener { result.success(false) }
+}
+
+// iOS Implementation
+private func connectToDevice(deviceId: String, result: @escaping FlutterResult) {
+    guard let browser = browser,
+          let session = session,
+          let peer = discoveredPeers[deviceId] else {
+        result(FlutterError(code: "CONNECT_ERROR", 
+                           message: "Peer not found", details: nil))
+        return
+    }
+    
+    browser.invitePeer(peer, to: session, withContext: nil, timeout: 30)
+    result(true)
+}
+```
+
+#### sendMessage(String deviceId, String message)
+Purpose: Transmit data to connected peer
+```dart
+// Flutter Layer
+Future<bool> sendMessage(String deviceId, String message) async {
+    final result = await methodChannel.invokeMethod<bool>(
+        'sendMessage',
+        {
+            'deviceId': deviceId,
+            'message': message,
+        },
+    );
+    return result ?? false;
+}
+
+// Android Implementation
+private fun sendMessage(deviceId: String, message: String, result: Result) {
+    Nearby.getConnectionsClient(context)
+        .sendPayload(
+            deviceId,
+            Payload.fromBytes(message.toByteArray())
+        )
+        .addOnSuccessListener { result.success(true) }
+        .addOnFailureListener { result.success(false) }
+}
+
+// iOS Implementation
+private func sendMessage(deviceId: String, message: String, result: @escaping FlutterResult) {
+    guard let session = session,
+          let peer = discoveredPeers[deviceId],
+          let data = message.data(using: .utf8) else {
+        result(false)
+        return
+    }
+    
+    do {
+        try session.send(data, toPeers: [peer], with: .reliable)
+        result(true)
+    } catch {
+        result(false)
+    }
+}
+```
+
+## 2. Event Channel Implementation
+
+### 2.1 Event Types and Payloads
+
+#### Device Found Event
+```dart
+{
+    'type': 'deviceFound',
+    'deviceId': String,
+    'deviceName': String,
+    'uniqueId': String,
+    'isRemoteDevice': bool
+}
+```
+
+#### Connection Success Event
+```dart
+{
+    'type': 'connectionSuccess',
+    'deviceId': String,
+    'deviceName': String
+}
+```
+
+#### Message Received Event
+```dart
+{
+    'type': 'messageReceived',
+    'deviceId': String,
+    'deviceName': String,
+    'message': String
+}
+```
+
+#### Device Lost Event
+```dart
+{
+    'type': 'deviceLost',
+    'deviceId': String
+}
+```
+
+### 2.2 Event Handling Implementation
+
+#### Flutter Event Stream Setup
+```dart
+void _initializePlatformEvents() {
+    const eventChannel = EventChannel('nearby_sync_utility_events');
+    eventChannel.receiveBroadcastStream().listen(
+        _handlePlatformEvent,
+        onError: (error) {
+            print('Error from platform events: $error');
+        },
+    );
+}
+```
+
+#### Event Processing
+```dart
+void _handlePlatformEvent(dynamic event) {
+    if (event is Map) {
+        final type = event['type'] as String?;
+        switch (type) {
+            case 'deviceFound':
+                _handleDeviceFound(event);
+                break;
+            case 'connectionSuccess':
+                _handleConnectionSuccess(event);
+                break;
+            case 'messageReceived':
+                _handleMessageReceived(event);
+                break;
+            case 'deviceLost':
+                _handleDeviceLost(event);
+                break;
+        }
+    }
+}
+```
+
+### 2.3 Platform-Specific Event Emission
+
+#### Android Event Emission
+```kotlin
+private fun emitDeviceFound(endpointId: String, info: DiscoveredEndpointInfo) {
+    eventSink?.success(mapOf(
+        "type" to "deviceFound",
+        "deviceId" to endpointId,
+        "deviceName" to info.endpointName,
+        "isRemoteDevice" to true
+    ))
+}
+
+private fun emitMessageReceived(endpointId: String, payload: Payload) {
+    val message = String(payload.asBytes()!!)
+    eventSink?.success(mapOf(
+        "type" to "messageReceived",
+        "deviceId" to endpointId,
+        "message" to message
+    ))
+}
+```
+
+#### iOS Event Emission
+```swift
+extension NearbySyncUtilityPlugin: MCNearbyServiceBrowserDelegate {
+    public func browser(_ browser: MCNearbyServiceBrowser, 
+                       foundPeer peerID: MCPeerID, 
+                       withDiscoveryInfo info: [String : String]?) {
+        eventSink?([
+            "type": "deviceFound",
+            "deviceId": peerID.displayName,
+            "deviceName": peerID.displayName,
+            "isRemoteDevice": true
+        ])
+    }
+}
+
+extension NearbySyncUtilityPlugin: MCSessionDelegate {
+    public func session(_ session: MCSession, 
+                       didReceive data: Data, 
+                       fromPeer peerID: MCPeerID) {
+        if let message = String(data: data, encoding: .utf8) {
+            eventSink?([
+                "type": "messageReceived",
+                "deviceId": peerID.displayName,
+                "message": message
+            ])
+        }
+    }
+}
+```
+
+### 2.4 Error Handling in Events
+
+#### Error Event Structure
+```dart
+{
+    'type': 'error',
+    'code': String,
+    'message': String,
+    'details': Map<String, dynamic>?
+}
+```
+
+#### Common Error Scenarios
+1. Permission Denied
+2. Connection Failed
+3. Connection Lost
+4. Message Send Failed
+
+#### Error Handling Implementation
+```dart
+void _handleError(dynamic error) {
+    if (error is PlatformException) {
+        switch (error.code) {
+            case 'CONNECTION_FAILED':
+                _handleConnectionError(error);
+                break;
+            case 'PERMISSION_DENIED':
+                _handlePermissionError(error);
+                break;
+            case 'CONNECTION_LOST':
+                _handleConnectionLost(error);
+                break;
+            case 'MESSAGE_FAILED':
+                _handleMessageError(error);
+                break;
+        }
+    }
+}
+```
+
+This documentation provides a comprehensive breakdown of the method channel and event channel implementations, including code snippets for both Flutter and native platforms, error handling, and event processing logic.

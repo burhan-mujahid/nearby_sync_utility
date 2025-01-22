@@ -1,0 +1,207 @@
+# Nearby Sync Utility Plugin Documentation
+
+## 1. Architecture Overview
+
+### 1.1 Core Components
+- Flutter Plugin Layer (Dart)
+- Platform Channel Interface
+- Native Implementation Layer
+  * Android: Google Nearby Connections API
+  * iOS: Multipeer Connectivity Framework
+
+### 1.2 Data Flow Hierarchy
+1. Flutter UI Layer
+2. Plugin Method Channel
+3. Platform-specific Implementation
+4. Native APIs
+5. Event Channel (Callbacks)
+
+## 2. Communication Channels
+
+### 2.1 Method Channel
+Name: "nearby_sync_utility"
+Purpose: Handles outgoing commands from Flutter to native platforms
+
+### 2.2 Event Channel
+Name: "nearby_sync_utility_events"
+Purpose: Handles incoming events from native platforms to Flutter
+
+## 3. Platform-Specific Implementations
+
+### 3.1 Android Implementation
+Framework: Google Nearby Connections API
+Service ID: "com.burhan.nearby_sync_utility.service"
+Strategy: P2P_STAR
+
+Key Components:
+- ConnectionsClient
+- AdvertisingOptions
+- DiscoveryOptions
+- ConnectionLifecycleCallback
+
+### 3.2 iOS Implementation
+Framework: MultipeerConnectivity
+Service Type: "nearby-sync"
+
+Key Components:
+- MCNearbyServiceAdvertiser
+- MCNearbyServiceBrowser
+- MCSession
+- MCPeerID
+
+## 4. Core Functions and Data Flow
+
+### 4.1 Device Advertisement
+Flow:
+1. UI triggers startAdvertising(deviceName)
+2. Method channel invokes native implementation
+3. Native layer starts advertising service
+4. Events channel reports status changes
+
+Implementation:
+Android: Nearby.getConnectionsClient().startAdvertising()
+iOS: MCNearbyServiceAdvertiser.start()
+
+### 4.2 Device Discovery
+Flow:
+1. UI initiates startDiscovery()
+2. Method channel triggers native discovery
+3. Native APIs scan for nearby devices
+4. Event channel reports discovered devices
+
+Implementation:
+Android: Nearby.getConnectionsClient().startDiscovery()
+iOS: MCNearbyServiceBrowser.start()
+
+### 4.3 Device Connection
+Flow:
+1. UI requests connection to device
+2. Native layer attempts connection
+3. Event channel reports connection status
+4. Connection maintained at native layer
+
+### 4.4 Message Exchange
+Flow:
+1. UI sends message to device
+2. Native layer handles transmission
+3. Recipient device receives via native API
+4. Event channel delivers message to Flutter
+
+## 5. Required Permissions
+
+### 5.1 Android Permissions
+Bluetooth:
+- android.permission.BLUETOOTH
+- android.permission.BLUETOOTH_ADMIN
+- android.permission.BLUETOOTH_SCAN
+- android.permission.BLUETOOTH_ADVERTISE
+- android.permission.BLUETOOTH_CONNECT
+
+Location:
+- android.permission.ACCESS_FINE_LOCATION
+- android.permission.ACCESS_COARSE_LOCATION
+
+WiFi:
+- android.permission.ACCESS_WIFI_STATE
+- android.permission.CHANGE_WIFI_STATE
+- android.permission.NEARBY_WIFI_DEVICES
+
+### 5.2 iOS Permissions
+Info.plist entries:
+- NSBluetoothAlwaysUsageDescription
+- NSBluetoothPeripheralUsageDescription
+- NSLocalNetworkUsageDescription
+
+## 6. Dependencies
+
+### 6.1 Flutter Dependencies
+- permission_handler: ^11.3.0
+- plugin_platform_interface: ^2.0.2
+
+### 6.2 Native Dependencies
+Android:
+- com.google.android.gms:play-services-nearby:19.1.0
+- androidx.core:core-ktx:1.12.0
+
+iOS:
+- MultipeerConnectivity.framework
+
+## 7. State Management
+
+### 7.1 Device States
+- Advertising State
+- Discovering State
+- Connection State
+- Message Exchange State
+
+### 7.2 Data Structures
+- Discovered Devices List
+- Connected Devices Set
+- Device Information Map
+
+## 8. Error Handling
+
+### 8.1 Permission Errors
+Flow:
+1. Check required permissions
+2. Request if not granted
+3. Report status to UI
+4. Handle denial scenarios
+
+### 8.2 Connection Errors
+Types:
+- Connection Timeout
+- Connection Rejected
+- Connection Lost
+- Authentication Failure
+
+## 9. Implementation Techniques
+
+### 9.1 Device Discovery
+Technique: Continuous Background Scanning
+Implementation:
+- Android: ConnectionsClient with Strategy.P2P_STAR
+- iOS: MCNearbyServiceBrowser with continuous discovery
+
+### 9.2 Connection Management
+Technique: Persistent Connection Handling
+Implementation:
+- Connection state monitoring
+- Automatic reconnection attempts
+- Connection quality maintenance
+
+### 9.3 Data Synchronization
+Technique: Reliable Message Exchange
+Implementation:
+- Message queuing
+- Delivery confirmation
+- State synchronization
+
+## 10. Testing Considerations
+
+### 10.1 Unit Testing
+Components:
+- Method Channel Tests
+- Platform Interface Tests
+- Mock Implementation Tests
+
+### 10.2 Integration Testing
+Scenarios:
+- Device Discovery
+- Connection Establishment
+- Message Exchange
+- Error Handling
+
+## 11. Performance Considerations
+
+### 11.1 Battery Usage
+Optimizations:
+- Scanning intervals
+- Connection maintenance
+- Background operation modes
+
+### 11.2 Memory Management
+Strategies:
+- Resource cleanup
+- Connection pooling
+- Cache management
